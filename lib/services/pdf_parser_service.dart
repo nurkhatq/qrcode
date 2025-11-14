@@ -49,7 +49,7 @@ class PdfParserService {
     try {
       // Очистка текста от лишних пробелов и переносов
       final cleanedText = _cleanText(text);
-      
+
       _logger.d('Очищенный текст:\n$cleanedText');
 
       // Извлечение даты приема-передачи
@@ -60,8 +60,12 @@ class PdfParserService {
 
       _logger.d('Дата приема-передачи: $transferDate');
 
+      // Извлечение информации о том, кто сдал
+      final handedBy = _extractHandedBy(cleanedText);
+      _logger.d('Сдал: $handedBy');
+
       // Извлечение таблицы с данными
-      final tableRecords = _extractTableRecords(cleanedText, source, transferDate);
+      final tableRecords = _extractTableRecords(cleanedText, source, transferDate, handedBy);
       records.addAll(tableRecords);
 
       return records;
@@ -100,9 +104,9 @@ class PdfParserService {
       final day = int.parse(match.group(1)!);
       final month = int.parse(match.group(2)!);
       final year = int.parse(match.group(3)!);
-      
+
       int hour = 0, minute = 0, second = 0;
-      
+
       if (match.group(4) != null) {
         hour = int.parse(match.group(4)!);
         minute = int.parse(match.group(5)!);
@@ -116,36 +120,70 @@ class PdfParserService {
     }
   }
 
+  /// Извлечение информации о том, кто сдал груз
+  String _extractHandedBy(String text) {
+    // Ищем паттерн "Сдал:" и извлекаем текст после него
+    // Пример: "Сдал: Производство мебели TURAN PickUp Point 6 AS"
+    final handedByPattern = RegExp(
+      r'Сдал:\s*([^\n]+?)(?:\s+Принял:|$)',
+      caseSensitive: false,
+      multiLine: true,
+    );
+
+    final match = handedByPattern.firstMatch(text);
+    if (match != null && match.group(1) != null) {
+      String handedBy = match.group(1)!.trim();
+      // Очистка от лишних символов
+      handedBy = handedBy.replaceAll(RegExp(r'\s+'), ' ');
+      // Удаляем "PickUp Point" и всё после него
+      handedBy = handedBy.split(RegExp(r'\s+PickUp\s+Point', caseSensitive: false))[0];
+      _logger.d('Извлечено "Сдал": $handedBy');
+      return handedBy.trim();
+    }
+
+    _logger.w('Не удалось извлечь информацию "Сдал"');
+    return '';
+  }
+
   /// Извлечение записей из таблицы
   List<ScannedRecord> _extractTableRecords(
     String text,
     String source,
     DateTime transferDate,
+    String handedBy,
   ) {
     final List<ScannedRecord> records = [];
 
-    // Паттерн для строки таблицы
-    // Формат: [номер] [номер_места] [вес кг] [номер_заказа]
-    // Пример: "1 ZMKZ0000001 5.2 кг WB123456789"
-    
-    // Более гибкий паттерн, который учитывает разные варианты форматирования
+    // Новый паттерн для строки таблицы
+    // Формат из вашего PDF: [номер] [номер_места с дефисом] [вес] [заказ часть1] [заказ часть2]
+    // Пример: "1 696166030­1 7.25 69616 6030"
+    // Примечание: дефис может быть обычным "-" или мягким переносом "­" (U+00AD)
+
     final rowPattern = RegExp(
-      r'(\d+)\s+([A-Z0-9]+)\s+([\d,\.]+)\s*(?:кг|kg)?\s+([A-Z0-9]+)',
-      caseSensitive: false,
+      r'(\d+)\s+([\d]+[\-\u00AD][\d]+)\s+([\d,\.]+)\s+([\d]+)\s+([\d]+)',
       multiLine: true,
     );
 
     final matches = rowPattern.allMatches(text);
-    
+
     _logger.d('Найдено совпадений паттерна: ${matches.length}');
 
     for (var match in matches) {
       try {
         final orderNumber = int.parse(match.group(1)!);
-        final placeNumber = _normalizeString(match.group(2)!);
+
+        // Номер места - заменяем мягкий перенос на обычный дефис
+        String placeNumber = match.group(2)!;
+        placeNumber = placeNumber.replaceAll('\u00AD', '-');
+
+        // Вес
         final weightStr = match.group(3)!.replaceAll(',', '.');
         final weight = double.parse(weightStr);
-        final orderCode = _normalizeString(match.group(4)!);
+
+        // Номер заказа - объединяем две части без пробела
+        final orderPart1 = match.group(4)!;
+        final orderPart2 = match.group(5)!;
+        final orderCode = orderPart1 + orderPart2;
 
         // Проверка валидности данных
         if (placeNumber.isEmpty || orderCode.isEmpty || weight <= 0) {
@@ -160,10 +198,11 @@ class PdfParserService {
           placeNumber: placeNumber,
           weight: weight,
           orderCode: orderCode,
+          handedBy: handedBy,
         );
 
         records.add(record);
-        _logger.d('Добавлена запись: $placeNumber - $orderCode');
+        _logger.d('Добавлена запись: $placeNumber - вес: $weight - заказ: $orderCode');
       } catch (e) {
         _logger.w('Ошибка парсинга строки таблицы: $e');
         continue;
@@ -173,7 +212,7 @@ class PdfParserService {
     // Если основной паттерн не сработал, пробуем альтернативный метод
     if (records.isEmpty) {
       _logger.i('Основной паттерн не нашел записей. Пробуем альтернативный метод...');
-      records.addAll(_extractTableRecordsAlternative(text, source, transferDate));
+      records.addAll(_extractTableRecordsAlternative(text, source, transferDate, handedBy));
     }
 
     return records;
@@ -184,69 +223,62 @@ class PdfParserService {
     String text,
     String source,
     DateTime transferDate,
+    String handedBy,
   ) {
     final List<ScannedRecord> records = [];
 
     try {
       // Разбиваем текст на строки
       final lines = text.split('\n');
-      
+
       for (var line in lines) {
         line = line.trim();
         if (line.isEmpty) continue;
 
-        // Ищем строки, которые содержат номер места (начинается с букв, содержит цифры)
-        final placePattern = RegExp(r'([A-Z]{2,}[0-9]+)', caseSensitive: false);
-        final placeMatch = placePattern.firstMatch(line);
-        
-        if (placeMatch == null) continue;
-
-        final placeNumber = _normalizeString(placeMatch.group(1)!);
-
-        // Ищем вес в этой строке
-        final weightPattern = RegExp(r'([\d,\.]+)\s*(?:кг|kg)?', caseSensitive: false);
-        final weightMatch = weightPattern.firstMatch(line);
-        
-        if (weightMatch == null) continue;
-
-        final weightStr = weightMatch.group(1)!.replaceAll(',', '.');
-        final weight = double.tryParse(weightStr);
-        
-        if (weight == null || weight <= 0) continue;
-
-        // Ищем номер заказа (обычно начинается с WB или других букв)
-        final orderPattern = RegExp(r'([A-Z]{2}[0-9]+)', caseSensitive: false);
-        final orderMatches = orderPattern.allMatches(line);
-        
-        String? orderCode;
-        for (var match in orderMatches) {
-          final code = match.group(1)!;
-          if (code != placeNumber) {
-            orderCode = _normalizeString(code);
-            break;
-          }
-        }
-
-        if (orderCode == null || orderCode.isEmpty) continue;
-
-        // Пытаемся найти номер по порядку (обычно в начале строки)
-        final numberPattern = RegExp(r'^(\d+)');
-        final numberMatch = numberPattern.firstMatch(line);
-        final orderNumber = numberMatch != null 
-            ? int.tryParse(numberMatch.group(1)!) ?? records.length + 1
-            : records.length + 1;
-
-        final record = ScannedRecord(
-          transferDate: transferDate,
-          source: source,
-          orderNumber: orderNumber,
-          placeNumber: placeNumber,
-          weight: weight,
-          orderCode: orderCode,
+        // Попробуем найти строку формата: [номер] [цифры­цифра] [вес] [цифры] [цифры]
+        // Более простой паттерн без жестких требований
+        final simplePattern = RegExp(
+          r'^(\d+)\s+([\d]+[\-\u00AD\s]*[\d]+)\s+([\d,\.]+)\s+([\d\s]+)$',
         );
 
-        records.add(record);
-        _logger.d('Альтернативный метод: добавлена запись $placeNumber - $orderCode');
+        final match = simplePattern.firstMatch(line);
+        if (match == null) continue;
+
+        try {
+          final orderNumber = int.parse(match.group(1)!);
+
+          // Извлекаем номер места
+          String placeNumber = match.group(2)!.trim();
+          placeNumber = placeNumber.replaceAll('\u00AD', '-');
+          placeNumber = placeNumber.replaceAll(RegExp(r'\s+'), '');
+
+          // Извлекаем вес
+          final weightStr = match.group(3)!.replaceAll(',', '.');
+          final weight = double.tryParse(weightStr);
+          if (weight == null || weight <= 0) continue;
+
+          // Извлекаем номер заказа (может быть с пробелами)
+          String orderCode = match.group(4)!.trim();
+          orderCode = orderCode.replaceAll(RegExp(r'\s+'), '');
+
+          if (placeNumber.isEmpty || orderCode.isEmpty) continue;
+
+          final record = ScannedRecord(
+            transferDate: transferDate,
+            source: source,
+            orderNumber: orderNumber,
+            placeNumber: placeNumber,
+            weight: weight,
+            orderCode: orderCode,
+            handedBy: handedBy,
+          );
+
+          records.add(record);
+          _logger.d('Альтернативный метод: добавлена запись $placeNumber - $orderCode');
+        } catch (e) {
+          _logger.w('Ошибка обработки строки: $line - $e');
+          continue;
+        }
       }
     } catch (e) {
       _logger.w('Ошибка в альтернативном методе парсинга: $e');

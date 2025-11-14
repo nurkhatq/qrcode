@@ -45,7 +45,7 @@ class DatabaseService {
   /// Создание таблиц при первом запуске
   Future<void> _onCreate(Database db, int version) async {
     _logger.i('Создание таблиц базы данных');
-    
+
     await db.execute('''
       CREATE TABLE scanned_records (
         id TEXT PRIMARY KEY,
@@ -56,6 +56,7 @@ class DatabaseService {
         placeNumber TEXT NOT NULL,
         weight REAL NOT NULL,
         orderCode TEXT NOT NULL,
+        handedBy TEXT NOT NULL DEFAULT '',
         isSynced INTEGER NOT NULL DEFAULT 0,
         syncDate TEXT,
         createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -82,9 +83,12 @@ class DatabaseService {
   /// Обновление базы данных при изменении версии
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
     _logger.i('Обновление базы данных с версии $oldVersion на $newVersion');
-    
-    // Здесь будут миграции при обновлении структуры БД
-    // Пока оставляем пустым
+
+    // Миграция с версии 1 на 2: добавление поля handedBy
+    if (oldVersion < 2) {
+      _logger.i('Миграция: добавление поля handedBy');
+      await db.execute('ALTER TABLE scanned_records ADD COLUMN handedBy TEXT NOT NULL DEFAULT ""');
+    }
   }
 
   /// Сохранение записи в базу данных

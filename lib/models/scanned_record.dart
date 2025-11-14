@@ -27,7 +27,10 @@ class ScannedRecord {
   
   /// Номер заказа (например WB123456789)
   final String orderCode;
-  
+
+  /// Кто сдал (например "Производство мебели TURAN")
+  final String handedBy;
+
   /// Флаг - была ли запись отправлена в Google Sheets
   final bool isSynced;
   
@@ -43,6 +46,7 @@ class ScannedRecord {
     required this.placeNumber,
     required this.weight,
     required this.orderCode,
+    required this.handedBy,
     this.isSynced = false,
     this.syncDate,
   })  : id = id ?? const Uuid().v4(),
@@ -58,6 +62,7 @@ class ScannedRecord {
     String? placeNumber,
     double? weight,
     String? orderCode,
+    String? handedBy,
     bool? isSynced,
     DateTime? syncDate,
   }) {
@@ -70,6 +75,7 @@ class ScannedRecord {
       placeNumber: placeNumber ?? this.placeNumber,
       weight: weight ?? this.weight,
       orderCode: orderCode ?? this.orderCode,
+      handedBy: handedBy ?? this.handedBy,
       isSynced: isSynced ?? this.isSynced,
       syncDate: syncDate ?? this.syncDate,
     );
@@ -86,6 +92,7 @@ class ScannedRecord {
       'placeNumber': placeNumber,
       'weight': weight,
       'orderCode': orderCode,
+      'handedBy': handedBy,
       'isSynced': isSynced ? 1 : 0,
       'syncDate': syncDate?.toIso8601String(),
     };
@@ -102,9 +109,10 @@ class ScannedRecord {
       placeNumber: map['placeNumber'] as String,
       weight: map['weight'] as double,
       orderCode: map['orderCode'] as String,
+      handedBy: map['handedBy'] as String? ?? '',
       isSynced: (map['isSynced'] as int) == 1,
-      syncDate: map['syncDate'] != null 
-          ? DateTime.parse(map['syncDate'] as String) 
+      syncDate: map['syncDate'] != null
+          ? DateTime.parse(map['syncDate'] as String)
           : null,
     );
   }
@@ -120,6 +128,7 @@ class ScannedRecord {
       placeNumber,
       weight.toString(),
       orderCode,
+      handedBy,
     ];
   }
 
@@ -131,7 +140,7 @@ class ScannedRecord {
 
   @override
   String toString() {
-    return 'ScannedRecord{id: $id, placeNumber: $placeNumber, orderCode: $orderCode, weight: $weight, isSynced: $isSynced}';
+    return 'ScannedRecord{id: $id, placeNumber: $placeNumber, orderCode: $orderCode, weight: $weight, handedBy: $handedBy, isSynced: $isSynced}';
   }
 
   @override
