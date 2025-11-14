@@ -1,0 +1,62 @@
+name: qr_scanner_app
+description: QR Scanner приложение для сканирования актов приема-передачи и отправки в Google Sheets
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.5.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  
+  # UI компоненты
+  cupertino_icons: ^1.0.8
+  
+  # QR сканирование - mobile_scanner (самая актуальная и надежная библиотека на 2025)
+  # Использует ML Kit для Android, обеспечивает отличное распознавание даже в сложных условиях
+  mobile_scanner: ^5.2.3
+  
+  # PDF парсинг - Syncfusion (лучшее решение для извлечения текста)
+  syncfusion_flutter_pdf: ^27.2.3
+  
+  # Google Sheets API - gsheets (простая обертка над googleapis)
+  gsheets: ^0.5.0
+  
+  # HTTP запросы для скачивания PDF
+  http: ^1.2.2
+  dio: ^5.7.0
+  
+  # Локальное хранилище данных
+  shared_preferences: ^2.3.2
+  sqflite: ^2.4.0
+  path_provider: ^2.1.4
+  path: ^1.9.0
+  
+  # State Management - Provider (простой и надежный)
+  provider: ^6.1.2
+  
+  # Работа с разрешениями
+  permission_handler: ^11.3.1
+  
+  # Форматирование даты
+  intl: ^0.19.0
+  
+  # Логирование
+  logger: ^2.4.0
+  
+  # UUID для генерации уникальных ID
+  uuid: ^4.5.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+  
+  # Если нужны будут assets (например, для иконок или примеров)
+  # assets:
+  #   - assets/images/
+  #   - assets/credentials.json
