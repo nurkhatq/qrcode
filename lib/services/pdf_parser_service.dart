@@ -129,7 +129,7 @@ class PdfParserService {
   }
 
   /// НОВЫЙ МЕТОД: Построчное извлечение для Android
-  /// Ищет паттерн с учетом пустых строк между данными
+  /// Паттерн: Вес → Номер → Заказ → Место (4 строки)
   List<ScannedRecord> _extractTableRecordsAndroid(
     String text,
     String source,
@@ -138,41 +138,44 @@ class PdfParserService {
     final List<ScannedRecord> records = [];
     final lines = text.split('\n').map((l) => l.trim()).toList();
 
-    _logger.i('=== ANDROID МЕТОД: Построчный парсинг (с пропуском пустых строк) ===');
+    _logger.i('=== ANDROID МЕТОД: Построчный парсинг (Вес → Номер → Заказ → Место) ===');
     _logger.d('Всего строк: ${lines.length}');
 
-    // Извлекаем "Сдал" и вес
+    // Извлекаем "Сдал"
     final handedBy = _extractHandedBy(text);
-    final weightPattern = RegExp(r'(\d+[,\.]\d+)');
-    final weightMatch = weightPattern.firstMatch(text);
-    final defaultWeight = weightMatch != null 
-        ? double.tryParse(weightMatch.group(1)!.replaceAll(',', '.')) ?? 0.0
-        : 0.0;
 
     // Фильтруем только непустые строки
     final nonEmptyLines = lines.where((line) => line.isNotEmpty).toList();
     _logger.d('Непустых строк: ${nonEmptyLines.length}');
 
-    // Ищем последовательность: Номер → Заказ → Место
-    for (int i = 0; i < nonEmptyLines.length - 2; i++) {
+    // Ищем последовательность: Вес → Номер → Заказ → Место (4 строки)
+    for (int i = 0; i < nonEmptyLines.length - 3; i++) {
       final line1 = nonEmptyLines[i];
       final line2 = nonEmptyLines[i + 1];
       final line3 = nonEmptyLines[i + 2];
+      final line4 = nonEmptyLines[i + 3];
 
       // Проверяем паттерны
-      final numberMatch = RegExp(r'^(\d+)$').firstMatch(line1);
-      final orderMatch = RegExp(r'^(\d+)\s+(\d+)$').firstMatch(line2);
-      final placeMatch = RegExp(r'^(\d+\-\d+)$').firstMatch(line3);
+      // Строка 1: Вес (число с точкой, например "15.6")
+      final weightMatch = RegExp(r'^(\d+[,\.]\d+)$').firstMatch(line1);
+      // Строка 2: Номер (просто цифра, например "1")
+      final numberMatch = RegExp(r'^(\d+)$').firstMatch(line2);
+      // Строка 3: Заказ (две части, например "71037 1844")
+      final orderMatch = RegExp(r'^(\d+)\s+(\d+)$').firstMatch(line3);
+      // Строка 4: Место (формат XXX-N, например "710371844-1")
+      final placeMatch = RegExp(r'^(\d+\-\d+)$').firstMatch(line4);
 
-      if (numberMatch != null && orderMatch != null && placeMatch != null) {
+      if (weightMatch != null && numberMatch != null && orderMatch != null && placeMatch != null) {
         try {
+          final weightStr = weightMatch.group(1)!.replaceAll(',', '.');
+          final weight = double.tryParse(weightStr);
           final orderNumber = int.tryParse(numberMatch.group(1)!);
           final orderPart1 = orderMatch.group(1)!;
           final orderPart2 = orderMatch.group(2)!;
           final orderCode = orderPart1 + orderPart2;
           final placeNumber = placeMatch.group(1)!;
 
-          if (orderNumber == null || orderCode.isEmpty || placeNumber.isEmpty) {
+          if (weight == null || weight <= 0 || orderNumber == null || orderCode.isEmpty || placeNumber.isEmpty) {
             continue;
           }
 
@@ -181,16 +184,16 @@ class PdfParserService {
             source: source,
             orderNumber: orderNumber,
             placeNumber: placeNumber,
-            weight: defaultWeight,
+            weight: weight,
             orderCode: orderCode,
             handedBy: handedBy,
           );
 
           records.add(record);
-          _logger.d('✓ #$orderNumber: $placeNumber ($defaultWeight кг) → $orderCode');
+          _logger.d('✓ #$orderNumber: $placeNumber ($weight кг) → $orderCode');
 
           // Пропускаем обработанные строки
-          i += 2;
+          i += 3;
         } catch (e) {
           _logger.w('Ошибка обработки строк: $e');
           continue;
@@ -202,7 +205,7 @@ class PdfParserService {
     return records;
   }
 
-  /// DESKTOP МЕТОД: Построчный с пропуском пустых строк
+  /// DESKTOP МЕТОД: Построчный (Вес → Номер → Заказ → Место)
   List<ScannedRecord> _extractTableRecords(
     String text,
     String source,
@@ -210,15 +213,10 @@ class PdfParserService {
   ) {
     final List<ScannedRecord> records = [];
 
-    _logger.i('=== DESKTOP МЕТОД: Построчный с заказом из 2 частей (с пропуском пустых строк) ===');
+    _logger.i('=== DESKTOP МЕТОД: Построчный (Вес → Номер → Заказ → Место) ===');
 
-    // Извлекаем "Сдал" и вес
+    // Извлекаем "Сдал"
     final handedBy = _extractHandedBy(text);
-    final weightPattern = RegExp(r'(\d+[,\.]\d+)');
-    final weightMatch = weightPattern.firstMatch(text);
-    final defaultWeight = weightMatch != null 
-        ? double.tryParse(weightMatch.group(1)!.replaceAll(',', '.')) ?? 0.0
-        : 0.0;
 
     final lines = text.split('\n').map((l) => l.trim()).toList();
     
@@ -226,26 +224,34 @@ class PdfParserService {
     final nonEmptyLines = lines.where((line) => line.isNotEmpty).toList();
     _logger.d('Непустых строк: ${nonEmptyLines.length}');
 
-    // Ищем паттерн: Номер → Заказ → Место
-    for (int i = 0; i < nonEmptyLines.length - 2; i++) {
+    // Ищем паттерн: Вес → Номер → Заказ → Место (4 строки)
+    for (int i = 0; i < nonEmptyLines.length - 3; i++) {
       final line1 = nonEmptyLines[i];
       final line2 = nonEmptyLines[i + 1];
       final line3 = nonEmptyLines[i + 2];
+      final line4 = nonEmptyLines[i + 3];
 
       // Проверяем паттерны
-      final numberMatch = RegExp(r'^(\d+)$').firstMatch(line1);
-      final orderMatch = RegExp(r'^(\d+)\s+(\d+)$').firstMatch(line2);
-      final placeMatch = RegExp(r'^(\d+\-\d+)$').firstMatch(line3);
+      // Строка 1: Вес
+      final weightMatch = RegExp(r'^(\d+[,\.]\d+)$').firstMatch(line1);
+      // Строка 2: Номер
+      final numberMatch = RegExp(r'^(\d+)$').firstMatch(line2);
+      // Строка 3: Заказ (две части)
+      final orderMatch = RegExp(r'^(\d+)\s+(\d+)$').firstMatch(line3);
+      // Строка 4: Место
+      final placeMatch = RegExp(r'^(\d+\-\d+)$').firstMatch(line4);
 
-      if (numberMatch != null && orderMatch != null && placeMatch != null) {
+      if (weightMatch != null && numberMatch != null && orderMatch != null && placeMatch != null) {
         try {
+          final weightStr = weightMatch.group(1)!.replaceAll(',', '.');
+          final weight = double.tryParse(weightStr);
           final orderNumber = int.tryParse(numberMatch.group(1)!);
           final orderPart1 = orderMatch.group(1)!;
           final orderPart2 = orderMatch.group(2)!;
           final orderCode = orderPart1 + orderPart2;
           final placeNumber = placeMatch.group(1)!;
 
-          if (orderNumber == null || orderCode.isEmpty || placeNumber.isEmpty) {
+          if (weight == null || weight <= 0 || orderNumber == null || orderCode.isEmpty || placeNumber.isEmpty) {
             continue;
           }
 
@@ -254,16 +260,16 @@ class PdfParserService {
             source: source,
             orderNumber: orderNumber,
             placeNumber: placeNumber,
-            weight: defaultWeight,
+            weight: weight,
             orderCode: orderCode,
             handedBy: handedBy,
           );
 
           records.add(record);
-          _logger.d('✓ #$orderNumber: $placeNumber ($defaultWeight кг) → $orderCode');
+          _logger.d('✓ #$orderNumber: $placeNumber ($weight кг) → $orderCode');
 
           // Пропускаем обработанные строки
-          i += 2;
+          i += 3;
         } catch (e) {
           _logger.w('Ошибка обработки строк: $e');
           continue;
@@ -277,8 +283,10 @@ class PdfParserService {
 
   /// Извлечение информации "Сдал"
   String _extractHandedBy(String text) {
+    // Ищем строку ПОСЛЕ даты приема-передачи
+    // Формат: "Дата приёма-передачи:\n\n14.11.2025 13:06:30\n\nПроизводство мебели TURAN"
     final handedByPattern = RegExp(
-      r'Сдал:\s*([^\n]+?)(?:\s+Принял:|$)',
+      r'\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}:\d{2}\s*\n+\s*([^\n]+)',
       caseSensitive: false,
       multiLine: true,
     );
@@ -288,7 +296,7 @@ class PdfParserService {
       String handedBy = match.group(1)!.trim();
       handedBy = handedBy.replaceAll(RegExp(r'\s+'), ' ');
       
-      // Убираем "PickUp Point" и всё после
+      // Убираем "PickUp Point" и всё после, если есть
       final parts = handedBy.split(RegExp(r'\s+PickUp\s+Point', caseSensitive: false));
       if (parts.isNotEmpty) {
         handedBy = parts[0];
@@ -297,7 +305,26 @@ class PdfParserService {
       return handedBy.trim();
     }
     
-    // Если не нашли, возвращаем пустую строку
+    // Если не нашли по новому паттерну, пробуем старый
+    final oldPattern = RegExp(
+      r'Сдал:\s*([^\n]+?)(?:\s+Принял:|$)',
+      caseSensitive: false,
+      multiLine: true,
+    );
+    
+    final oldMatch = oldPattern.firstMatch(text);
+    if (oldMatch != null && oldMatch.group(1) != null) {
+      String handedBy = oldMatch.group(1)!.trim();
+      handedBy = handedBy.replaceAll(RegExp(r'\s+'), ' ');
+      
+      final parts = handedBy.split(RegExp(r'\s+PickUp\s+Point', caseSensitive: false));
+      if (parts.isNotEmpty) {
+        handedBy = parts[0];
+      }
+      
+      return handedBy.trim();
+    }
+    
     return '';
   }
 
