@@ -1,4 +1,5 @@
 // lib/services/pdf_parser_service.dart
+// ВЕРСИЯ ДЛЯ ANDROID - Построчное извлечение данных
 
 import 'dart:io';
 import 'package:logger/logger.dart';
@@ -15,18 +16,33 @@ class PdfParserService {
     String source,
   ) async {
     try {
-      _logger.i('Начало парсинга PDF: $pdfPath');
+      _logger.i('========================================');
+      _logger.i('НАЧАЛО ПАРСИНГА PDF');
+      _logger.i('Путь к файлу: $pdfPath');
+      _logger.i('Источник: $source');
+      _logger.i('========================================');
 
       // Загрузка PDF документа
       final File file = File(pdfPath);
+      
+      if (!await file.exists()) {
+        _logger.e('❌ ФАЙЛ НЕ СУЩЕСТВУЕТ: $pdfPath');
+        throw Exception('PDF файл не найден: $pdfPath');
+      }
+      
+      _logger.i('✓ Файл существует');
+      
       final bytes = await file.readAsBytes();
+      _logger.i('✓ Файл загружен, размер: ${bytes.length} байт');
+      
       final PdfDocument document = PdfDocument(inputBytes: bytes);
+      _logger.i('✓ PDF документ открыт, количество страниц: ${document.pages.count}');
 
       // Извлечение текста из всех страниц
       final PdfTextExtractor extractor = PdfTextExtractor(document);
       final String fullText = extractor.extractText();
 
-      _logger.d('Извлечен текст длиной: ${fullText.length} символов');
+      _logger.i('✓ Текст извлечён, длина: ${fullText.length} символов');
 
       // Парсинг текста
       final records = _parseText(fullText, source);
@@ -34,10 +50,14 @@ class PdfParserService {
       // Закрытие документа
       document.dispose();
 
-      _logger.i('Парсинг завершен. Найдено записей: ${records.length}');
+      _logger.i('========================================');
+      _logger.i('ПАРСИНГ ЗАВЕРШЕН');
+      _logger.i('Найдено записей: ${records.length}');
+      _logger.i('========================================');
+      
       return records;
     } catch (e, stackTrace) {
-      _logger.e('Ошибка парсинга PDF: $e', error: e, stackTrace: stackTrace);
+      _logger.e('❌ КРИТИЧЕСКАЯ ОШИБКА ПАРСИНГА PDF', error: e, stackTrace: stackTrace);
       rethrow;
     }
   }
@@ -47,59 +67,49 @@ class PdfParserService {
     final List<ScannedRecord> records = [];
 
     try {
-      // Очистка текста от лишних пробелов и переносов
+      // Очистка текста
       final cleanedText = _cleanText(text);
 
-      _logger.d('Очищенный текст (первые 500 символов):\n${cleanedText.length > 500 ? cleanedText.substring(0, 500) : cleanedText}');
-
-      // Извлечение даты приема-передачи
+      // Извлечение даты
       final transferDate = _extractTransferDate(cleanedText);
       if (transferDate == null) {
-        _logger.e('Не найдена дата приема-передачи. Проверьте формат даты в PDF.');
-        _logger.d('Полный текст для отладки:\n$cleanedText');
-        throw Exception('Не удалось извлечь дату приема-передачи из PDF. Проверьте формат документа.');
+        _logger.e('❌ НЕ НАЙДЕНА ДАТА ПРИЕМА-ПЕРЕДАЧИ');
+        throw Exception('Не удалось извлечь дату приема-передачи из PDF');
       }
 
-      _logger.d('Дата приема-передачи: $transferDate');
+      _logger.i('✓ Дата: $transferDate');
 
-      // Извлечение информации о том, кто сдал
+      // Извлечение "Сдал"
       final handedBy = _extractHandedBy(cleanedText);
-      _logger.d('Сдал: $handedBy');
+      _logger.i('✓ Сдал: "$handedBy"');
 
-      // Извлечение таблицы с данными
-      final tableRecords = _extractTableRecords(cleanedText, source, transferDate, handedBy);
+      // Извлечение таблицы - ПОСТРОЧНЫЙ МЕТОД
+      final tableRecords = _extractTableRecordsLineByLine(cleanedText, source, transferDate, handedBy);
       records.addAll(tableRecords);
 
       if (records.isEmpty) {
-        _logger.e('Не найдено ни одной записи в таблице. Полный текст для отладки:\n$cleanedText');
-        throw Exception('Не удалось извлечь записи из таблицы PDF. Проверьте формат документа.');
+        _logger.e('❌ НЕ НАЙДЕНО НИ ОДНОЙ ЗАПИСИ');
+        throw Exception('Не удалось извлечь записи из таблицы PDF');
       }
 
       return records;
     } catch (e, stackTrace) {
-      _logger.e('Ошибка парсинга текста: $e', error: e, stackTrace: stackTrace);
+      _logger.e('❌ ОШИБКА ПАРСИНГА ТЕКСТА', error: e, stackTrace: stackTrace);
       rethrow;
     }
   }
 
-  /// Очистка текста от служебных символов
+  /// Очистка текста
   String _cleanText(String text) {
-    // Удаление мягких переносов (Unicode soft hyphen)
-    text = text.replaceAll('\u00AD', '');
-    text = text.replaceAll('\u200B', ''); // Zero-width space
-    
-    // Нормализация пробелов
-    text = text.replaceAll(RegExp(r'\s+'), ' ');
-    
-    // Удаление лишних переносов строк
-    text = text.replaceAll(RegExp(r'\n\s*\n'), '\n');
-    
+    text = text.replaceAll('\u00AD', '-');
+    text = text.replaceAll('\u200B', '');
+    text = text.replaceAll('\xa0', ' ');
+    text = text.split('\n').map((line) => line.replaceAll(RegExp(r'[ \t]+'), ' ').trim()).join('\n');
     return text.trim();
   }
 
-  /// Извлечение даты приема-передачи из текста
+  /// Извлечение даты
   DateTime? _extractTransferDate(String text) {
-    // Паттерн для даты: "11.11.2025 17:17:30" или "11.11.2025"
     final datePattern = RegExp(
       r'(\d{1,2})\.(\d{1,2})\.(\d{4})(?:\s+(\d{1,2}):(\d{1,2}):(\d{1,2}))?',
     );
@@ -113,7 +123,6 @@ class PdfParserService {
       final year = int.parse(match.group(3)!);
 
       int hour = 0, minute = 0, second = 0;
-
       if (match.group(4) != null) {
         hour = int.parse(match.group(4)!);
         minute = int.parse(match.group(5)!);
@@ -122,15 +131,12 @@ class PdfParserService {
 
       return DateTime(year, month, day, hour, minute, second);
     } catch (e) {
-      _logger.w('Ошибка парсинга даты: $e');
       return null;
     }
   }
 
-  /// Извлечение информации о том, кто сдал груз
+  /// Извлечение "Сдал"
   String _extractHandedBy(String text) {
-    // Ищем паттерн "Сдал:" и извлекаем текст после него
-    // Пример: "Сдал: Производство мебели TURAN PickUp Point 6 AS"
     final handedByPattern = RegExp(
       r'Сдал:\s*([^\n]+?)(?:\s+Принял:|$)',
       caseSensitive: false,
@@ -140,20 +146,18 @@ class PdfParserService {
     final match = handedByPattern.firstMatch(text);
     if (match != null && match.group(1) != null) {
       String handedBy = match.group(1)!.trim();
-      // Очистка от лишних символов
       handedBy = handedBy.replaceAll(RegExp(r'\s+'), ' ');
-      // Удаляем "PickUp Point" и всё после него
-      handedBy = handedBy.split(RegExp(r'\s+PickUp\s+Point', caseSensitive: false))[0];
-      _logger.d('Извлечено "Сдал": $handedBy');
+      final parts = handedBy.split(RegExp(r'\s+PickUp\s+Point', caseSensitive: false));
+      if (parts.isNotEmpty) {
+        handedBy = parts[0];
+      }
       return handedBy.trim();
     }
-
-    _logger.w('Не удалось извлечь информацию "Сдал"');
     return '';
   }
 
-  /// Извлечение записей из таблицы
-  List<ScannedRecord> _extractTableRecords(
+  /// ПОСТРОЧНОЕ извлечение записей - для Android
+  List<ScannedRecord> _extractTableRecordsLineByLine(
     String text,
     String source,
     DateTime transferDate,
@@ -161,126 +165,47 @@ class PdfParserService {
   ) {
     final List<ScannedRecord> records = [];
 
-    // Новый паттерн для строки таблицы
-    // Формат из вашего PDF: [номер] [номер_места с дефисом] [вес] [заказ часть1] [заказ часть2]
-    // Пример: "1 696166030­1 7.25 69616 6030"
-    // Примечание: дефис может быть обычным "-" или мягким переносом "­" (U+00AD)
+    _logger.i('========================================');
+    _logger.i('ПОСТРОЧНОЕ ИЗВЛЕЧЕНИЕ (для Android)');
+    _logger.i('========================================');
 
-    final rowPattern = RegExp(
-      r'(\d+)\s+([\d]+[\-\u00AD][\d]+)\s+([\d,\.]+)\s+([\d]+)\s+([\d]+)',
-      multiLine: true,
-    );
+    final lines = text.split('\n');
+    _logger.i('Всего строк: ${lines.length}');
 
-    final matches = rowPattern.allMatches(text);
+    // Ищем паттерн: Вес → Номер → Заказ → Место (4 последовательные строки)
+    for (int i = 0; i < lines.length - 3; i++) {
+      final line1 = lines[i].trim();
+      final line2 = lines[i + 1].trim();
+      final line3 = lines[i + 2].trim();
+      final line4 = lines[i + 3].trim();
 
-    _logger.i('Основной паттерн: найдено совпадений: ${matches.length}');
+      // Проверяем паттерн:
+      // Строка 1: Вес (число с точкой/запятой, например "7.25")
+      // Строка 2: Номер (просто цифра, например "1")
+      // Строка 3: Заказ (цифры с пробелом, например "69616 6030")
+      // Строка 4: Номер места (формат XXX-N, например "696166030-1")
 
-    for (var match in matches) {
-      try {
-        final orderNumber = int.parse(match.group(1)!);
+      final weightMatch = RegExp(r'^(\d+[,\.]\d+)$').firstMatch(line1);
+      final numberMatch = RegExp(r'^(\d+)$').firstMatch(line2);
+      final orderMatch = RegExp(r'^(\d+)\s+(\d+)$').firstMatch(line3);
+      final placeMatch = RegExp(r'^(\d+\-\d+)$').firstMatch(line4);
 
-        // Номер места - заменяем мягкий перенос на обычный дефис
-        String placeNumber = match.group(2)!;
-        placeNumber = placeNumber.replaceAll('\u00AD', '-');
-
-        // Вес
-        final weightStr = match.group(3)!.replaceAll(',', '.');
-        final weight = double.parse(weightStr);
-
-        // Номер заказа - объединяем две части без пробела
-        final orderPart1 = match.group(4)!;
-        final orderPart2 = match.group(5)!;
-        final orderCode = orderPart1 + orderPart2;
-
-        // Проверка валидности данных
-        if (placeNumber.isEmpty || orderCode.isEmpty || weight <= 0) {
-          _logger.w('Пропуск невалидной записи: $orderNumber');
-          continue;
-        }
-
-        final record = ScannedRecord(
-          transferDate: transferDate,
-          source: source,
-          orderNumber: orderNumber,
-          placeNumber: placeNumber,
-          weight: weight,
-          orderCode: orderCode,
-          handedBy: handedBy,
-        );
-
-        records.add(record);
-        _logger.d('Добавлена запись: $placeNumber - вес: $weight - заказ: $orderCode');
-      } catch (e) {
-        _logger.w('Ошибка парсинга строки таблицы: $e');
-        continue;
-      }
-    }
-
-    // Если основной паттерн не сработал, пробуем альтернативный метод
-    if (records.isEmpty) {
-      _logger.w('Основной паттерн не нашел записей. Пробуем альтернативный метод...');
-      final altRecords = _extractTableRecordsAlternative(text, source, transferDate, handedBy);
-      records.addAll(altRecords);
-      _logger.i('Альтернативный метод нашел записей: ${altRecords.length}');
-    }
-
-    return records;
-  }
-
-  /// Альтернативный метод извлечения записей (для плохо отформатированных PDF)
-  List<ScannedRecord> _extractTableRecordsAlternative(
-    String text,
-    String source,
-    DateTime transferDate,
-    String handedBy,
-  ) {
-    final List<ScannedRecord> records = [];
-
-    try {
-      // Разбиваем текст на строки
-      final lines = text.split('\n');
-      _logger.d('Всего строк для анализа: ${lines.length}');
-
-      int checkedLines = 0;
-      for (var line in lines) {
-        line = line.trim();
-        if (line.isEmpty) continue;
-
-        checkedLines++;
-        // Попробуем найти строку формата: [номер] [цифры­цифра] [вес] [цифры] [цифры]
-        // Более простой паттерн без жестких требований
-        final simplePattern = RegExp(
-          r'^(\d+)\s+([\d]+[\-\u00AD\s]*[\d]+)\s+([\d,\.]+)\s+([\d\s]+)$',
-        );
-
-        final match = simplePattern.firstMatch(line);
-        if (match == null) {
-          // Логируем первые несколько непрошедших строк для отладки
-          if (checkedLines <= 5 && line.contains(RegExp(r'\d'))) {
-            _logger.d('Строка не подошла под паттерн: "$line"');
-          }
-          continue;
-        }
-
+      if (weightMatch != null && numberMatch != null && orderMatch != null && placeMatch != null) {
         try {
-          final orderNumber = int.parse(match.group(1)!);
-
-          // Извлекаем номер места
-          String placeNumber = match.group(2)!.trim();
-          placeNumber = placeNumber.replaceAll('\u00AD', '-');
-          placeNumber = placeNumber.replaceAll(RegExp(r'\s+'), '');
-
-          // Извлекаем вес
-          final weightStr = match.group(3)!.replaceAll(',', '.');
+          // Извлекаем данные
+          final weightStr = weightMatch.group(1)!.replaceAll(',', '.');
           final weight = double.tryParse(weightStr);
-          if (weight == null || weight <= 0) continue;
+          final orderNumber = int.tryParse(numberMatch.group(1)!);
+          final orderPart1 = orderMatch.group(1)!;
+          final orderPart2 = orderMatch.group(2)!;
+          final orderCode = orderPart1 + orderPart2;
+          final placeNumber = placeMatch.group(1)!;
 
-          // Извлекаем номер заказа (может быть с пробелами)
-          String orderCode = match.group(4)!.trim();
-          orderCode = orderCode.replaceAll(RegExp(r'\s+'), '');
+          if (weight == null || weight <= 0 || orderNumber == null) {
+            continue;
+          }
 
-          if (placeNumber.isEmpty || orderCode.isEmpty) continue;
-
+          // Создаем запись
           final record = ScannedRecord(
             transferDate: transferDate,
             source: source,
@@ -292,45 +217,45 @@ class PdfParserService {
           );
 
           records.add(record);
-          _logger.d('Альтернативный метод: добавлена запись $placeNumber - $orderCode');
+          _logger.i('✓ Запись #$orderNumber: $placeNumber ($weightкг) → $orderCode');
+
+          // Пропускаем обработанные строки
+          i += 3;
         } catch (e) {
-          _logger.w('Ошибка обработки строки: $line - $e');
+          _logger.w('Ошибка обработки строк: $e');
           continue;
         }
       }
-    } catch (e) {
-      _logger.w('Ошибка в альтернативном методе парсинга: $e');
     }
+
+    _logger.i('========================================');
+    _logger.i('НАЙДЕНО ЗАПИСЕЙ: ${records.length}');
+    _logger.i('========================================');
 
     return records;
   }
 
-  /// Валидация PDF файла
+  /// Валидация PDF
   Future<bool> validatePdf(String pdfPath) async {
     try {
       final file = File(pdfPath);
       if (!await file.exists()) {
-        _logger.w('PDF файл не существует: $pdfPath');
         return false;
       }
 
       final bytes = await file.readAsBytes();
       
-      // Проверка сигнатуры PDF файла
       if (bytes.length < 5 || 
           bytes[0] != 0x25 || bytes[1] != 0x50 || 
           bytes[2] != 0x44 || bytes[3] != 0x46) {
-        _logger.w('Файл не является валидным PDF');
         return false;
       }
 
-      // Пытаемся открыть документ
       final document = PdfDocument(inputBytes: bytes);
       document.dispose();
 
       return true;
     } catch (e) {
-      _logger.e('Ошибка валидации PDF: $e');
       return false;
     }
   }
