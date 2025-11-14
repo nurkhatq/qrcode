@@ -50,12 +50,14 @@ class PdfParserService {
       // Очистка текста от лишних пробелов и переносов
       final cleanedText = _cleanText(text);
 
-      _logger.d('Очищенный текст:\n$cleanedText');
+      _logger.d('Очищенный текст (первые 500 символов):\n${cleanedText.length > 500 ? cleanedText.substring(0, 500) : cleanedText}');
 
       // Извлечение даты приема-передачи
       final transferDate = _extractTransferDate(cleanedText);
       if (transferDate == null) {
-        throw Exception('Не удалось извлечь дату приема-передачи');
+        _logger.e('Не найдена дата приема-передачи. Проверьте формат даты в PDF.');
+        _logger.d('Полный текст для отладки:\n$cleanedText');
+        throw Exception('Не удалось извлечь дату приема-передачи из PDF. Проверьте формат документа.');
       }
 
       _logger.d('Дата приема-передачи: $transferDate');
@@ -67,6 +69,11 @@ class PdfParserService {
       // Извлечение таблицы с данными
       final tableRecords = _extractTableRecords(cleanedText, source, transferDate, handedBy);
       records.addAll(tableRecords);
+
+      if (records.isEmpty) {
+        _logger.e('Не найдено ни одной записи в таблице. Полный текст для отладки:\n$cleanedText');
+        throw Exception('Не удалось извлечь записи из таблицы PDF. Проверьте формат документа.');
+      }
 
       return records;
     } catch (e, stackTrace) {
@@ -166,7 +173,7 @@ class PdfParserService {
 
     final matches = rowPattern.allMatches(text);
 
-    _logger.d('Найдено совпадений паттерна: ${matches.length}');
+    _logger.i('Основной паттерн: найдено совпадений: ${matches.length}');
 
     for (var match in matches) {
       try {
@@ -211,8 +218,10 @@ class PdfParserService {
 
     // Если основной паттерн не сработал, пробуем альтернативный метод
     if (records.isEmpty) {
-      _logger.i('Основной паттерн не нашел записей. Пробуем альтернативный метод...');
-      records.addAll(_extractTableRecordsAlternative(text, source, transferDate, handedBy));
+      _logger.w('Основной паттерн не нашел записей. Пробуем альтернативный метод...');
+      final altRecords = _extractTableRecordsAlternative(text, source, transferDate, handedBy);
+      records.addAll(altRecords);
+      _logger.i('Альтернативный метод нашел записей: ${altRecords.length}');
     }
 
     return records;
@@ -230,11 +239,14 @@ class PdfParserService {
     try {
       // Разбиваем текст на строки
       final lines = text.split('\n');
+      _logger.d('Всего строк для анализа: ${lines.length}');
 
+      int checkedLines = 0;
       for (var line in lines) {
         line = line.trim();
         if (line.isEmpty) continue;
 
+        checkedLines++;
         // Попробуем найти строку формата: [номер] [цифры­цифра] [вес] [цифры] [цифры]
         // Более простой паттерн без жестких требований
         final simplePattern = RegExp(
@@ -242,7 +254,13 @@ class PdfParserService {
         );
 
         final match = simplePattern.firstMatch(line);
-        if (match == null) continue;
+        if (match == null) {
+          // Логируем первые несколько непрошедших строк для отладки
+          if (checkedLines <= 5 && line.contains(RegExp(r'\d'))) {
+            _logger.d('Строка не подошла под паттерн: "$line"');
+          }
+          continue;
+        }
 
         try {
           final orderNumber = int.parse(match.group(1)!);
@@ -285,14 +303,6 @@ class PdfParserService {
     }
 
     return records;
-  }
-
-  /// Нормализация строки (удаление пробелов между символами)
-  String _normalizeString(String str) {
-    // Удаление всех пробелов
-    str = str.replaceAll(RegExp(r'\s+'), '');
-    // Приведение к верхнему регистру
-    return str.toUpperCase();
   }
 
   /// Валидация PDF файла
