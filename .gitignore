@@ -43,4 +43,6 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
-lib/config/
+
+# Ignore sensitive constants file, but keep the example
+lib/config/constants.dart
